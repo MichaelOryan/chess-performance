@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Chess Performance Calculator</title>
+  <style>
+    /* Simple reset and styling */
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: sans-serif;
+      background: #f0f0f0;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 2rem auto;
+      background: #fff;
+      padding: 1rem 2rem;
+      border-radius: 5px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+    }
+
+    h1, h2, h3 {
+      margin-top: 1.5rem;
+      margin-bottom: 0.5rem;
+      text-align: center;
+    }
+
+    .input-section,
+    .output-section {
+      margin: 1rem 0;
+    }
+
+    .input-row {
+      margin-top: 1rem;
+    }
+
+    label {
+      font-weight: bold;
+    }
+
+    input[type="file"] {
+      margin-top: 0.5rem;
+    }
+
+    input[type="text"] {
+      padding: 0.2rem;
+      width: 220px;
+      margin-left: 0.5rem;
+      margin-top: 0.5rem;
+    }
+
+    textarea {
+      width: 100%;
+      height: 150px;
+      resize: vertical;
+      margin-top: 0.5rem;
+    }
+
+    button {
+      margin-top: 1rem;
+      padding: 0.5rem 1rem;
+      font-size: 1rem;
+      background: #007bff;
+      color: #fff;
+      border: none;
+      border-radius: 3px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #0056b3;
+    }
+
+    .results {
+      margin-top: 1rem;
+    }
+
+    .stats {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      justify-content: center;
+    }
+
+    .stat-box {
+      background: #fafafa;
+      border: 1px solid #ccc;
+      border-radius: 3px;
+      padding: 1rem;
+      min-width: 180px;
+      box-sizing: border-box;
+      text-align: center;
+    }
+
+    .stat-box h3 {
+      margin-top: 0;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 1rem;
+    }
+
+    th, td {
+      padding: 0.5rem;
+      border: 1px solid #ccc;
+      text-align: center;
+    }
+
+    .table-container {
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Chess Performance Calculator</h1>
+
+    <!-- Input section for user name, PGN upload, or PGN text paste. -->
+    <div class="input-section">
+      <div class="input-row">
+        <label for="userNameInput">Enter your PGN name:</label>
+        <input type="text" id="userNameInput" placeholder="e.g. JohnDoe" />
+      </div>
+
+      <div class="input-row">
+        <h2>Upload PGN File</h2>
+        <input type="file" id="pgnFile" accept=".pgn" />
+      </div>
+
+      <div class="input-row">
+        <h2>Or Paste PGN Text</h2>
+        <textarea id="pgnText" placeholder="Paste PGN data here..."></textarea>
+      </div>
+
+      <button id="calculateBtn">Calculate Performance</button>
+    </div>
+
+    <!-- Output section to show results -->
+    <div class="output-section">
+      <div id="results" class="results"></div>
+    </div>
+  </div>
+
+  <script>
+    /************************************************************************
+     * PGN parsing and performance calculation in plain JavaScript.
+     * 
+     * Performance Rating (generic formula):
+     *     Performance = Avg Opp Rating + 800 * (Score - 0.5)
+     * 
+     * We will compute:
+     *   - Overall performance rating
+     *   - Per-color performance rating (white, black)
+     *   - Per-opening, per-color statistics and performance.
+     ************************************************************************/
+
+    // Utility: read a file as text
+    function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+      });
+    }
+
+    // Very naive PGN splitting by blank lines.
+    function splitPGNIntoGames(pgnString) {
+      const sanitized = pgnString.replace(/\r/g, '').trim();
+      return sanitized.split('[Event "Live Chess"]').map(game => game.trim()).filter(g => g.length > 0);
+    }
+
+    // Extract PGN tags, e.g. [White "Name"], [WhiteElo "1234"], etc.
+    function parsePGNTags(gameString) {
+      const tagRegex = /\[(\w+)\s+"([^"]+)"\]/g;
+      const tags = {};
+      let match;
+      while ((match = tagRegex.exec(gameString)) !== null) {
+        tags[match[1]] = match[2];
+      }
+      return tags;
+    }
+
+    // Get the moves (first ~3 pairs of moves) to identify the opening.
+    function parseMoves(gameString) {
+      const movesSection = gameString.split(/\n\n/).pop(); // part after the tags
+      // Remove move numbers (e.g., "1.", "2...", etc.), braces for comments.
+      const movesText = movesSection
+        .replace(/\d+\.+/g, '')
+        .replace(/\{[^}]*\}/g, '')
+        .trim();
+      const moveTokens = movesText.split(/\s+/);
+      return moveTokens.slice(0, 2); // up to first 6 moves (3 moves each side)
+    }
+
+    // Get the game result from tags: "1-0", "0-1", or "1/2-1/2"
+    function getGameResult(tags) {
+      const result = tags["Result"];
+      if (!result) return null;
+
+      switch (result) {
+        case "1-0":
+          return { white: 1, black: 0 };
+        case "0-1":
+          return { white: 0, black: 1 };
+        case "1/2-1/2":
+          return { white: 0.5, black: 0.5 };
+        default:
+          return null;
+      }
+    }
+
+    // This array holds all the games played by the user (as White or Black).
+    const userGames = [];
+
+    function processPGN(pgnString, userName) {
+      // Clear previous results
+      userGames.length = 0;
+
+      // Split the PGN into individual games
+      const games = splitPGNIntoGames(pgnString);
+
+      games.forEach(gameString => {
+        const tags = parsePGNTags(gameString);
+        const moves = parseMoves(gameString);
+        const result = getGameResult(tags);
+
+        if (!result) return;
+
+        const whiteName = tags["White"] || "";
+        const blackName = tags["Black"] || "";
+
+        // Identify if user is White or Black
+        let userColor = null;
+        if (whiteName.toLowerCase().includes(userName.toLowerCase())) {
+          userColor = "white";
+        } else if (blackName.toLowerCase().includes(userName.toLowerCase())) {
+          userColor = "black";
+        } else {
+          // Not the user's game
+          return;
+        }
+
+        // Opponent rating
+        let opponentRating = 0;
+        if (userColor === "white" && tags["BlackElo"]) {
+          opponentRating = parseInt(tags["BlackElo"], 10) || 0;
+        } else if (userColor === "black" && tags["WhiteElo"]) {
+          opponentRating = parseInt(tags["WhiteElo"], 10) || 0;
+        }
+
+        // User's score from this game
+        const userScore = (userColor === "white") ? result.white : result.black;
+
+        // Opening signature
+        const openingKey = moves.join(" ");
+
+        userGames.push({
+          userColor,
+          userScore,
+          opponentRating,
+          openingKey
+        });
+      });
+    }
+
+    // Basic helper to compute a performance rating
+    // given the sum of opponent ratings, number of games, total user points.
+    function computePerfRating(sumOppRatings, gamesPlayed, totalScore) {
+      if (gamesPlayed === 0) return 0;
+      const avgOpp = sumOppRatings / gamesPlayed;
+      const scoreFraction = totalScore / gamesPlayed; // 0..1
+      return avgOpp + 800 * (scoreFraction - 0.5);
+    }
+
+    // Calculate overall performance plus color breakdown.
+    function calculatePerformance() {
+      if (userGames.length === 0) {
+        return {
+          totalGames: 0,
+          overallScore: 0,
+          averageOpponentRating: 0,
+          performanceRating: 0,
+          colorBreakdown: {
+            white: { games: 0, score: 0, sumOpp: 0, perf: 0 },
+            black: { games: 0, score: 0, sumOpp: 0, perf: 0 }
+          },
+          openings: {} // Each opening => { white: { games, score, sumOpp }, black: {...} }
+        };
+      }
+
+      let totalScore = 0;
+      let sumOpponentRatings = 0;
+
+      const colorBreakdown = {
+        white: { games: 0, score: 0, sumOpp: 0, perf: 0 },
+        black: { games: 0, score: 0, sumOpp: 0, perf: 0 }
+      };
+
+      const openingsData = {};
+
+      // Gather stats
+      userGames.forEach(g => {
+        // Overall stats
+        totalScore += g.userScore;
+        sumOpponentRatings += g.opponentRating;
+
+        // Color stats
+        colorBreakdown[g.userColor].games += 1;
+        colorBreakdown[g.userColor].score += g.userScore;
+        colorBreakdown[g.userColor].sumOpp += g.opponentRating;
+
+        // Opening breakdown
+        if (!openingsData[g.openingKey]) {
+          openingsData[g.openingKey] = {
+            white: { games: 0, score: 0, sumOpp: 0 },
+            black: { games: 0, score: 0, sumOpp: 0 }
+          };
+        }
+        openingsData[g.openingKey][g.userColor].games += 1;
+        openingsData[g.openingKey][g.userColor].score += g.userScore;
+        openingsData[g.openingKey][g.userColor].sumOpp += g.opponentRating;
+      });
+
+      // Compute overall performance
+      const totalGames = userGames.length;
+      const overallScore = totalScore / totalGames; // fraction of points
+      const averageOpponentRating = sumOpponentRatings / totalGames;
+      const performanceRating = averageOpponentRating + 800 * (overallScore - 0.5);
+
+      // Compute color-wise performance rating
+      for (const color of ["white", "black"]) {
+        const c = colorBreakdown[color];
+        c.perf = computePerfRating(c.sumOpp, c.games, c.score);
+      }
+
+      return {
+        totalGames,
+        overallScore, // fraction (0..1)
+        averageOpponentRating,
+        performanceRating,
+        colorBreakdown,
+        openings: openingsData
+      };
+    }
+
+    // Display the results
+    function displayResults(summary) {
+      const resultsDiv = document.getElementById("results");
+
+      if (summary.totalGames === 0) {
+        resultsDiv.innerHTML = "<p>No valid games found for this user!</p>";
+        return;
+      }
+
+      // Overall + color breakdown
+      const whiteGames = summary.colorBreakdown.white.games;
+      const whiteScorePct = whiteGames 
+        ? (summary.colorBreakdown.white.score / whiteGames) * 100 
+        : 0;
+
+      const blackGames = summary.colorBreakdown.black.games;
+      const blackScorePct = blackGames 
+        ? (summary.colorBreakdown.black.score / blackGames) * 100 
+        : 0;
+
+      // Build HTML
+      let html = `
+        <div class="stats">
+          <div class="stat-box">
+            <h3>Total Games</h3>
+            <p>${summary.totalGames}</p>
+          </div>
+          <div class="stat-box">
+            <h3>Overall Score</h3>
+            <p>${(summary.overallScore * 100).toFixed(1)}%</p>
+          </div>
+          <div class="stat-box">
+            <h3>Avg Opponent Rating</h3>
+            <p>${summary.averageOpponentRating.toFixed(0)}</p>
+          </div>
+          <div class="stat-box">
+            <h3>Performance Rating</h3>
+            <p>${summary.performanceRating.toFixed(0)}</p>
+          </div>
+        </div>
+
+        <h2>Color Breakdown</h2>
+        <div class="stats">
+          <div class="stat-box">
+            <h3>White</h3>
+            <p>Games: ${whiteGames}</p>
+            <p>Score: ${whiteScorePct.toFixed(1)}%</p>
+            <p>Perf: ${summary.colorBreakdown.white.perf.toFixed(0)}</p>
+          </div>
+          <div class="stat-box">
+            <h3>Black</h3>
+            <p>Games: ${blackGames}</p>
+            <p>Score: ${blackScorePct.toFixed(1)}%</p>
+            <p>Perf: ${summary.colorBreakdown.black.perf.toFixed(0)}</p>
+          </div>
+        </div>
+      `;
+
+      // Openings breakdown table
+      // Each row: Opening, WhiteGames, WhiteScore%, WhitePerf, BlackGames, BlackScore%, BlackPerf
+      const openingRows = Object.entries(summary.openings).map(([opening, data]) => {
+        const wGames = data.white.games;
+        const wScoreFrac = wGames ? data.white.score / wGames : 0;
+        const wPerf = computePerfRating(data.white.sumOpp, wGames, data.white.score);
+
+        const bGames = data.black.games;
+        const bScoreFrac = bGames ? data.black.score / bGames : 0;
+        const bPerf = computePerfRating(data.black.sumOpp, bGames, data.black.score);
+
+        return `
+          <tr>
+            <td>${opening || "(No moves)"}</td>
+            <td>${wGames}</td>
+            <td>${(wScoreFrac * 100).toFixed(1)}%</td>
+            <td>${wPerf.toFixed(0)}</td>
+            <td>${bGames}</td>
+            <td>${(bScoreFrac * 100).toFixed(1)}%</td>
+            <td>${bPerf.toFixed(0)}</td>
+          </tr>
+        `;
+      }).join("");
+
+      html += `
+        <h2>Openings Breakdown</h2>
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th>Opening (First ~3 Moves)</th>
+                <th>W Games</th>
+                <th>W Score</th>
+                <th>W Perf</th>
+                <th>B Games</th>
+                <th>B Score</th>
+                <th>B Perf</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${openingRows}
+            </tbody>
+          </table>
+        </div>
+      `;
+
+      resultsDiv.innerHTML = html;
+    }
+
+    // Handle the "Calculate Performance" button
+    async function handleCalculateClick() {
+      const fileInput = document.getElementById("pgnFile");
+      const textInput = document.getElementById("pgnText");
+      const userNameInput = document.getElementById("userNameInput");
+      const resultsDiv = document.getElementById("results");
+
+      const userName = userNameInput.value.trim();
+      if (!userName) {
+        resultsDiv.innerHTML = "<p>Please enter your PGN name first.</p>";
+        return;
+      }
+
+      resultsDiv.innerHTML = "<p>Processing...</p>";
+
+      let pgnData = textInput.value.trim();
+
+      // If a file is provided, read it
+      if (fileInput.files && fileInput.files.length > 0) {
+        try {
+          const fileContent = await readFileAsText(fileInput.files[0]);
+          pgnData = fileContent;
+        } catch (error) {
+          console.error("Error reading file:", error);
+          resultsDiv.innerHTML = "<p>Error reading file.</p>";
+          return;
+        }
+      }
+
+      if (!pgnData) {
+        resultsDiv.innerHTML = "<p>Please provide a PGN file or paste PGN text.</p>";
+        return;
+      }
+
+      // Process the PGN with the specified user name
+      processPGN(pgnData, userName);
+
+      // Calculate the performance
+      const summary = calculatePerformance();
+
+      // Display
+      displayResults(summary);
+    }
+
+    document.getElementById("calculateBtn").addEventListener("click", handleCalculateClick);
+  </script>
+</body>
+</html>
