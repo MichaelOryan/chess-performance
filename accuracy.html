@@ -28,7 +28,27 @@
 <div id="output"></div>
 
 <script>
+  function calculateStandardDeviation(arr) {
+  if (!Array.isArray(arr) || arr.length < 2) {
+    // Standard deviation requires at least two data points for a sample
+    return NaN; 
+  }
+
+  const mean = arr.reduce((sum, value) => sum + value, 0) / arr.length;
+
+  const squaredDifferencesSum = arr.reduce((sum, value) => {
+    return sum + Math.pow(value - mean, 2);
+  }, 0);
+
+  // For a sample, divide by (N - 1)
+  const variance = squaredDifferencesSum / (arr.length - 1);
+
+  return Math.sqrt(variance);
+}
+const stddev = calculateStandardDeviation;
+const avg   = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : NaN;
 function calc(){
+
   const txt   = document.getElementById('input').value;
   const outEl = document.getElementById('output');
   if(!txt.trim()){ outEl.textContent = 'Please paste some game text first.'; return; }
@@ -53,7 +73,7 @@ function calc(){
   const daily = {};  /* keyed by date string */
 
   const scoreVal = s => (s==='½'||s==='0.5') ? 0.5 : parseFloat(s);
-  const avg   = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : NaN;
+  // const avg   = a => a.length ? a.reduce((x,y)=>x+y,0)/a.length : NaN;
   const perf  = o => {
       const g=o.wins+o.losses;
       return g? ((o.wins-o.losses)/g)*400 + avg(o.opp) : NaN;
@@ -124,9 +144,9 @@ function calc(){
 `Stats for ${player}
 
 YOUR average accuracy:
-  Overall : ${fmt(avg(you.all.acc))} Acc -> Rating ${fmt((avg(you.all.acc)-64)*100)}
-  White   : ${fmt(avg(you.white.acc))} Acc -> Rating ${fmt((avg(you.white.acc)-64)*100)}
-  Black   : ${fmt(avg(you.black.acc))} Acc -> Rating ${fmt((avg(you.black.acc)-64)*100)}
+  Overall : ${fmt(avg(you.all.acc))} Acc -> Rating ${fmt((avg(you.all.acc)-64)*100)} -> Stddev ${fmt(stddev(you.all.acc))}
+  White   : ${fmt(avg(you.white.acc))} Acc -> Rating ${fmt((avg(you.white.acc)-64)*100)} -> Stddev ${fmt(stddev(you.white.acc))}
+  Black   : ${fmt(avg(you.black.acc))} Acc -> Rating ${fmt((avg(you.black.acc)-64)*100)} -> Stddev ${fmt(stddev(you.black.acc))}
 
 YOUR performance rating:
   Overall : ${fmt(perf(you.all))}
@@ -135,19 +155,24 @@ YOUR performance rating:
   
 
 OPPONENTS’ combined average accuracy:
-  Overall : ${fmt(avg(opp.all.acc))}
-  White   : ${fmt(avg(opp.white.acc))}   (their games as White)
-  Black   : ${fmt(avg(opp.black.acc))}   (their games as Black)
+  Overall : ${fmt(avg(opp.all.acc))} -> Rating ${fmt((avg(opp.all.acc)-64)*100)} -> Stddev ${fmt(stddev(opp.all.acc))}
+  White   : ${fmt(avg(opp.white.acc))}   -> Rating ${fmt((avg(opp.white.acc)-64)*100)} -> Stddev ${fmt(stddev(opp.white.acc))}
+  Black   : ${fmt(avg(opp.black.acc))}   -> Rating ${fmt((avg(opp.black.acc)-64)*100)} -> Stddev ${fmt(stddev(opp.black.acc))}
 
 OPPONENTS’ combined performance rating:
-  Overall : ${fmt(perf(opp.all))}
-  White   : ${fmt(perf(opp.white))}
-  Black   : ${fmt(perf(opp.black))}
+  Overall : ${fmt(perf(opp.all))} -> Actual Average ${fmt(avg(opp.all.opp))}
+  White   : ${fmt(perf(opp.white))} -> Actual Average ${fmt(avg(opp.white.opp))}
+  Black   : ${fmt(perf(opp.black))} -> Actual Average ${fmt(avg(opp.black.opp))}
+
+EXPECTED WIN/LOSS
+  Overall : Est ${fmt(simGames(you.all.acc, opp.all.acc).a)}% Actual = ${fmt((you.all.wins / you.all.acc.length)*100)}%
+  White : Est ${fmt(simGames(you.white.acc, opp.black.acc).a)}% Actual = ${fmt((you.white.wins / you.white.acc.length)*100)}%
+  Black : Est ${fmt(simGames(you.black.acc, opp.white.acc).a)}% Actual = ${fmt((you.black.wins / you.black.acc.length)*100)}%
 
 Games counted:
   You         – Overall ${you.all.acc.length}  |  White ${you.white.acc.length}  |  Black ${you.black.acc.length}
-  Opponents   – Overall ${opp.all.acc.length}  |  White ${opp.white.acc.length}  |  Black ${opp.black.acc.length}`;
-
+  Opponents   – Overall ${opp.all.acc.length}  |  White ${opp.white.acc.length}  |  Black ${opp.black.acc.length}
+  `;
 
   /* ---------- build day-by-day table ---------- */
   const rows = Object.keys(daily)
@@ -169,6 +194,41 @@ Games counted:
   /* ---------- inject into page ---------- */
   outEl.innerHTML = `<pre>${summary}</pre>${tableHTML}`;
 }
+
+
+function normalRandom(mu = 0, sigma = 1) {
+  let u = 0, v = 0;
+  // Ensure u and v are never 0
+  while (u === 0) u = Math.random();
+  while (v === 0) v = Math.random();
+
+  // Box-Muller transform
+  const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+
+  // Scale and shift
+  return mu + sigma * z;
+}
+
+function simGames(a_acc, b_acc) {
+  const GAMES = 1000;
+  const a_avg = avg(a_acc);
+  const b_avg = avg(b_acc);
+  const a_sd = stddev(a_acc);
+  const b_sd = stddev(b_acc);
+  let a_wins = 0, b_wins = 0;
+  const accum = [];
+  for(let i = 0; i < GAMES; i++)
+  {
+    let a_p = normalRandom(a_avg, a_sd);
+    let b_p = normalRandom(b_avg, b_sd);
+    accum.push([a_p, b_p]);
+    if(a_p > b_p) a_wins++;
+    else if(a_p < b_p) b_wins++;
+    // else draw
+  }
+  return {a: (a_wins / GAMES)*100, b:(b_wins / GAMES)*100};
+}
+
 </script>
 </body>
 </html>
