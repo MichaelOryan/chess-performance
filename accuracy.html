@@ -79,6 +79,7 @@ function calc(){
       return g? ((o.wins-o.losses)/g)*400 + avg(o.opp) : NaN;
   };
   const fmt   = x => isNaN(x) ? '—' : x.toFixed(2);
+  const fmtN = fixed => x => isNaN(x) ? '—' : x.toFixed(fixed);
   const estRt = a => isNaN(a) ? '—' : ((a-64)*100).toFixed(0);
 
   /* ---------- game loop ---------- */
@@ -139,6 +140,28 @@ function calc(){
     if(youLoss) daily[dKey].losses++;
   });
 
+  const simedGames = {
+    overall: simGames(you.all.acc, opp.all.acc),
+    white: simGames(you.white.acc, opp.black.acc),
+    black: simGames(you.black.acc, opp.white.acc),
+    
+  }
+
+  const gameDist = {
+    overall: winStatsScore(avg(you.all.acc), stddev(you.all.acc), avg(opp.all.acc), stddev(opp.all.acc), corr = 0, N = you.all.acc.length),
+    white: winStatsScore(avg(you.white.acc), stddev(you.white.acc), avg(opp.black.acc), stddev(opp.black.acc), corr = 0, N = you.white.acc.length),
+    black: winStatsScore(avg(you.black.acc), stddev(you.black.acc), avg(opp.white.acc), stddev(opp.white.acc), corr = 0, N = you.black.acc.length),
+  }
+
+  const accuracyDist = {
+    overall: statsSummary(you.all.acc),
+    white: statsSummary(you.white.acc),
+    black: statsSummary(you.black.acc),
+
+  }
+
+  // console.log(accuracyDist);
+
   /* ---------- build textual summary ---------- */
   const summary =
 `Stats for ${player}
@@ -164,15 +187,58 @@ OPPONENTS’ combined performance rating:
   White   : ${fmt(perf(opp.white))} -> Actual Average ${fmt(avg(opp.white.opp))}
   Black   : ${fmt(perf(opp.black))} -> Actual Average ${fmt(avg(opp.black.opp))}
 
-EXPECTED WIN/LOSS
-  Overall : Est ${fmt(simGames(you.all.acc, opp.all.acc).a)}% Actual = ${fmt((you.all.wins / you.all.acc.length)*100)}%
-  White : Est ${fmt(simGames(you.white.acc, opp.black.acc).a)}% Actual = ${fmt((you.white.wins / you.white.acc.length)*100)}%
-  Black : Est ${fmt(simGames(you.black.acc, opp.white.acc).a)}% Actual = ${fmt((you.black.wins / you.black.acc.length)*100)}%
+EXPECTED WIN/LOSS SIM
+  
+  Overall : Est ${fmt(simedGames.overall.a)}% -> est Elo ${fmt(estimateElo(avg(opp.all.opp), simedGames.overall.a/100))} -> Actual % ${fmt((you.all.wins / you.all.acc.length)*100)}% 
+  White : Est ${fmt(simedGames.white.a)}% -> est Elo ${fmt(estimateElo(avg(opp.white.opp), simedGames.white.a/100))} -> Actual % ${fmt((you.white.wins / you.white.acc.length)*100)}%
+  Black : Est ${fmt(simedGames.black.a)}% -> est Elo ${fmt(estimateElo(avg(opp.black.opp), simedGames.black.a/100))} -> Actual % ${fmt((you.black.wins / you.black.acc.length)*100)}%
+
+EXPECTED WIN/LOSS MATH
+  Side    |${pad(10)('Overall')}|${pad(10)('White')}|${pad(10)('Black')}|
+
+  Est Win%
+  ${pad(8)('5%')}|${pad(9)(fmt(gameDist.overall.ci95[0]*100))}%|${pad(9)(fmt(gameDist.white.ci95[0]*100))}%|${pad(9)(fmt(gameDist.black.ci95[0]*100))}%|
+  ${pad(8)('Avg')}|${pad(9)(fmt(gameDist.overall.p*100))}%|${pad(9)(fmt(gameDist.white.p*100))}%|${pad(9)(fmt(gameDist.black.p*100))}%|
+  ${pad(8)('95%')}|${pad(9)(fmt(gameDist.overall.ci95[1]*100))}%|${pad(9)(fmt(gameDist.white.ci95[1]*100))}%|${pad(9)(fmt(gameDist.black.ci95[1]*100))}%|
+  
+  ${pad(8)('StdErr')}|${pad(9)('±'+fmt(gameDist.overall.seN*100))}%|${pad(9)('±'+fmt(gameDist.white.seN*100))}%|${pad(9)('±'+fmt(gameDist.black.seN*100))}%|
+
+  Est Wins Vs Actual Wins
+  ${pad(8)('5%')}|${pad(10)(gameDist.overall.eN_ci95[0]+ ' of ' + you.all.acc.length)}|${pad(10)(gameDist.white.eN_ci95[0]+ ' of ' + you.white.acc.length)}|${pad(10)(gameDist.black.eN_ci95[0]+ ' of ' + you.black.acc.length)}|
+  ${pad(8)('Avg')}|${pad(10)(gameDist.overall.eN_p + ' of ' + you.all.acc.length)}|${pad(10)(gameDist.white.eN_p+ ' of ' + you.white.acc.length)}|${pad(10)(gameDist.black.eN_p+ ' of ' + you.black.acc.length)}|
+  ${pad(8)('95%')}|${pad(10)(gameDist.overall.eN_ci95[1] + ' of ' + you.all.acc.length)}|${pad(10)(gameDist.white.eN_ci95[1]+ ' of ' + you.white.acc.length)}|${pad(10)(gameDist.black.eN_ci95[1]+ ' of ' + you.black.acc.length)}|
+  
+  ${pad(8)('Actual')}|${pad(10)(you.all.wins+ ' of ' +you.all.acc.length)}|${pad(10)(you.white.wins+ ' of ' +you.white.acc.length)}|${pad(10)(you.black.wins+ ' of ' +you.black.acc.length)}|
+
+  Est Performance Rating
+  ${pad(8)('5%')}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.overall.ci95[0])))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.white.ci95[0])))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.black.ci95[0])))}|
+  ${pad(8)('Avg')}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.overall.p)))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.white.p)))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.black.p)))}|
+  ${pad(8)('95%')}|${pad(10)(fmtN(0)(estimateElo(avg(opp.all.opp), gameDist.overall.ci95[1])))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.white.opp), gameDist.white.ci95[1])))}|${pad(10)(fmtN(0)(estimateElo(avg(opp.black.opp), gameDist.black.ci95[1])))}|
+  
+  ${pad(8)('StdErr')}|${pad(10)('±'+fmtN(0)(stdErrEstimatedEloDiff(avg(opp.all.opp), gameDist.overall.p, gameDist.overall.seN)))}|${pad(10)('±'+fmtN(0)(stdErrEstimatedEloDiff(avg(opp.white.opp), gameDist.white.p, gameDist.white.seN)))}|${pad(10)('±'+fmtN(0)(stdErrEstimatedEloDiff(avg(opp.black.opp), gameDist.black.p, gameDist.black.seN)))}|
+
+  Est Accuracy
+  ${pad(8)('5%')}|${pad(10)(fmt(accuracyDist.overall.ci95[0]))}|${pad(10)(fmt(accuracyDist.white.ci95[0]))}|${pad(10)(fmt(accuracyDist.black.ci95[0]))}|
+  ${pad(8)('Avg')}|${pad(10)(fmt(accuracyDist.overall.mean))}|${pad(10)(fmt(accuracyDist.white.mean))}|${pad(10)(fmt(accuracyDist.black.mean))}|
+  ${pad(8)('95%')}|${pad(10)(fmt(accuracyDist.overall.ci95[1]))}|${pad(10)(fmt(accuracyDist.white.ci95[1]))}|${pad(10)(fmt(accuracyDist.black.ci95[1]))}|
+  
+  ${pad(8)('StdErr')}|${pad(10)('±'+fmt(accuracyDist.overall.se))}|${pad(10)('±'+fmt(accuracyDist.white.se))}|${pad(10)('±'+fmt(accuracyDist.black.se))}|
+
+  Est Strength from Accuracy
+  ${pad(8)('5%')}|${pad(10)(fmt((accuracyDist.overall.ci95[0]-64)*100))}|${pad(10)(fmt((accuracyDist.white.ci95[0]-64)*100))}|${pad(10)(fmt((accuracyDist.black.ci95[0]-64)*100))}|
+  ${pad(8)('Avg')}|${pad(10)(fmt((accuracyDist.overall.mean-64)*100))}|${pad(10)(fmt((accuracyDist.white.mean-64)*100))}|${pad(10)(fmt((accuracyDist.black.mean-64)*100))}|
+  ${pad(8)('95%')}|${pad(10)(fmt((accuracyDist.overall.ci95[1]-64)*100))}|${pad(10)(fmt((accuracyDist.white.ci95[1]-64)*100))}|${pad(10)(fmt((accuracyDist.black.ci95[1]-64)*100))}|
+  
+  ${pad(8)('StdErr')}|${pad(10)('±'+fmt(accuracyDist.overall.se*100))}|${pad(10)('±'+fmt(accuracyDist.white.se*100))}|${pad(10)('±'+fmt(accuracyDist.black.se*100))}|
 
 Games counted:
   You         – Overall ${you.all.acc.length}  |  White ${you.white.acc.length}  |  Black ${you.black.acc.length}
   Opponents   – Overall ${opp.all.acc.length}  |  White ${opp.white.acc.length}  |  Black ${opp.black.acc.length}
   `;
+
+  // console.log(opp);
+  console.log(gameDist);
+
 
   /* ---------- build day-by-day table ---------- */
   const rows = Object.keys(daily)
@@ -226,7 +292,112 @@ function simGames(a_acc, b_acc) {
     else if(a_p < b_p) b_wins++;
     // else draw
   }
+  // console.log({a_acc, b_acc, a_sd, b_sd, a_wins, b_wins, accum});
   return {a: (a_wins / GAMES)*100, b:(b_wins / GAMES)*100};
+}
+
+function stdErrEstimatedEloDiff(oppElo, p, se) {
+  return estimateElo(oppElo, p+se) - estimateElo(oppElo, p);
+}
+
+function estimateElo(oppElo, p) {
+  // if (p <= 0 || p >= 1) {
+  if (p < 0 || p > 1) {
+    // console.log(p);
+    throw new Error("Win probability must be between 0 and 1 (exclusive).");
+  }
+  if(p === 0) return oppElo - 400;
+  if(p === 1) return oppElo + 400;
+
+  return oppElo - 400 * Math.log10((1 - p) / p);
+}
+
+function winStatsScore(meanA, sdA, meanB, sdB, corr = 0, N = null) {
+  const p = winProbabilityScore(meanA, sdA, meanB, sdB, corr); // from earlier
+  const perMatchSD = Math.sqrt(p * (1 - p));
+
+  let seN = null, ci95 = null;
+  if (N != null && N > 0) {
+    seN = Math.sqrt(p * (1 - p) / N);
+    const z = 1.96;
+    ci95 = [Math.max(0, p - z * seN), Math.min(1, p + z * seN)];
+  }
+  return { p, perMatchSD, seN, ci95, N, eN_p: Math.round(N * p), eN_ci95: ci95.map(ci => Math.round(N * ci)), eN_seN: Math.round(seN * p)};
+}
+
+// ---- dependency (same as earlier answer) ----
+function winProbabilityScore(meanA, sdA, meanB, sdB, corr = 0) {
+  if (sdA < 0 || sdB < 0) throw new Error("Standard deviations must be >= 0.");
+  if (corr < -1 || corr > 1) throw new Error("corr must be between -1 and 1.");
+
+  const denom = Math.sqrt(sdA*sdA + sdB*sdB - 2*corr*sdA*sdB);
+  if (denom === 0) return meanA > meanB ? 1 : meanA < meanB ? 0 : 0.5;
+  const z = (meanA - meanB) / denom;
+  return standardNormalCDF(z);
+}
+
+function standardNormalCDF(x) { return 0.5 * (1 + erf(x / Math.SQRT2)); }
+function erf(x) {
+  const sign = x >= 0 ? 1 : -1; x = Math.abs(x);
+  const a1=0.254829592,a2=-0.284496736,a3=1.421413741,a4=-1.453152027,a5=1.061405429,p=0.3275911;
+  const t = 1 / (1 + p * x);
+  const y = 1 - (((((a5*t + a4)*t) + a3)*t + a2)*t + a1)*t * Math.exp(-x*x);
+  return sign * y;
+}
+
+function padLeft(value, length, char = '0') {
+  const str = String(value);
+  if (str.length >= length) return str;
+  return char.repeat(length - str.length) + str;
+}
+
+function pad(len)
+{
+  return value => padLeft(value, len, ' ');
+}
+
+function statsSummary(sample) {
+  if (!sample || sample.length === 0) {
+    throw new Error("Sample must be a non-empty array of numbers.");
+  }
+
+  const n = sample.length;
+
+  // --- mean ---
+  const mean = sample.reduce((a, b) => a + b, 0) / n;
+
+  // --- sample standard deviation (unbiased, denom n-1) ---
+  const variance = sample.reduce((a, b) => a + (b - mean) ** 2, 0) / (n - 1);
+  const stddev = Math.sqrt(variance);
+
+  // --- standard error of the mean ---
+  const se = stddev / Math.sqrt(n);
+
+  // --- 95% CI (using normal approx, z=1.96) ---
+  const z95 = 1.96;
+  const ci95 = [mean - z95 * se, mean + z95 * se];
+
+  // --- 5% & 95% quantiles (empirical percentiles) ---
+  const sorted = [...sample].sort((a, b) => a - b);
+  const q = (p) => {
+    const idx = (n - 1) * p;
+    const lower = Math.floor(idx);
+    const upper = Math.ceil(idx);
+    if (lower === upper) return sorted[lower];
+    return sorted[lower] * (upper - idx) + sorted[upper] * (idx - lower);
+  };
+  const q5 = q(0.05);
+  const q95 = q(0.95);
+
+  return {
+    mean,
+    stddev,
+    ci95,
+    q5,
+    q95,
+    se,
+    variance
+  };
 }
 
 </script>
